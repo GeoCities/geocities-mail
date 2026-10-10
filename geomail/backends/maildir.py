@@ -21,7 +21,7 @@ from .base import Backend, BackendError
 from .imap import attachment_bytes, parse_email
 from ..models import Attachment, Message, Outgoing
 
-MAIL_FOLDERS = ["INBOX", "Sent", "Trash"]
+MAIL_FOLDERS = ["INBOX", "Sent", "Trash", "Drafts"]
 OUTBOX_STATES = {"pending": "Waiting for approval", "sent": "Sent", "failed": "Failed"}
 
 
@@ -32,6 +32,7 @@ def ensure_layout(root) -> Path:
             (root / f / sub).mkdir(parents=True, exist_ok=True)
     for s in OUTBOX_STATES:
         (root / "outbox" / s).mkdir(parents=True, exist_ok=True)
+    (root / "Scheduled").mkdir(parents=True, exist_ok=True)
     return root
 
 
@@ -130,7 +131,10 @@ class MaildirMirrorBackend(Backend):
 
     # --- mail folders ---------------------------------------------------
     def folders(self) -> List[str]:
-        return ["INBOX", "Sent", "Outbox", "Trash"]
+        return ["INBOX", "Drafts", "Outbox", "Sent", "Trash"]
+
+    def scheduled_dir(self):
+        return self.root / "Scheduled"
 
     def _files(self, folder: str):
         for sub in ("new", "cur"):
@@ -153,6 +157,7 @@ class MaildirMirrorBackend(Backend):
         key, flags = _split_name(f.name)
         unread = sub == "new" or "S" not in flags
         m = parse_email(f.read_bytes(), f"{folder}/{key}", folder, unread)
+        m.starred = "F" in flags
         if not m.date:
             m.date = datetime.fromtimestamp(f.stat().st_mtime, timezone.utc).isoformat(timespec="seconds")
         return m
@@ -182,12 +187,43 @@ class MaildirMirrorBackend(Backend):
     def set_read(self, msg_id, read):
         if msg_id.startswith("outbox/"):
             return
+        self._set_flag(msg_id, "S", read)
+
+    def _set_flag(self, msg_id, flag, on):
         folder, sub, f = self._locate(msg_id)
         key, flags = _split_name(f.name)
         flags = set(flags)
-        (flags.add if read else flags.discard)("S")
+        (flags.add if on else flags.discard)(flag)
         dest = self.root / folder / "cur" / f"{key}:2,{''.join(sorted(flags))}"
         os.replace(f, dest)
+
+    def set_starred(self, msg_id, starred):
+        if msg_id.startswith("outbox/"):
+            raise BackendError("Outbox items can't be starred")
+        self._set_flag(msg_id, "F", starred)
+
+    # --- drafts: Drafts/ maildir, flag D -------------------------------
+    def save_draft(self, out: Outgoing, draft_id: Optional[str] = None) -> str:
+        from ..drafts import draft_eml
+        frm = self.address if "@" in self.address else ""
+        key = "draft-" + time.strftime("%Y%m%dT%H%M%S") + "-" + uuid.uuid4().hex[:8]
+        _atomic_write(self.root / "Drafts" / "cur" / f"{key}:2,DS", draft_eml(out, frm), self.root / "Drafts" / "tmp")
+        if draft_id:
+            self.delete_draft(draft_id)
+        return f"Drafts/{key}"
+
+    def get_draft(self, draft_id) -> Outgoing:
+        from ..drafts import outgoing_from_eml
+        folder, _, f = self._locate(draft_id)
+        if folder != "Drafts":
+            raise BackendError("Not a draft")
+        return outgoing_from_eml(f.read_bytes())
+
+    def delete_draft(self, draft_id):
+        folder, _, f = self._locate(draft_id)
+        if folder != "Drafts":
+            raise BackendError("Not a draft")
+        f.unlink()
 
     def delete(self, msg_id):
         if msg_id.startswith("outbox/"):
@@ -260,6 +296,7 @@ class MaildirMirrorBackend(Backend):
             "reply_all": bool(out.reply_all), "message_id": msgid,
             "attachments": [str(Path(p).resolve()) for p in out.attachments],
             "eml": f"{oid}.eml",
+            "scheduled_for": out.scheduled_for,
         }
         pend = self.root / "outbox" / "pending"
         _atomic_write(pend / f"{oid}.eml", raw)
@@ -277,6 +314,9 @@ class MaildirMirrorBackend(Backend):
         state, base = self._find_outbox(oid)
         side = json.loads(base.with_suffix(".json").read_text())
         status = OUTBOX_STATES[state]
+        if state == "pending" and side.get("scheduled_for"):
+            from ..schedule import fmt_local
+            status += f" (scheduled for {fmt_local(side['scheduled_for'])})"
         reason = base.parent / f"{oid}.reason.txt"
         if state == "failed" and reason.exists():
             status += ": " + reason.read_text().strip()

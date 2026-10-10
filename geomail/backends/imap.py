@@ -79,7 +79,8 @@ class ImapBackend(Backend):
 
     def __init__(self, imap_host: str, username: str, password: str, imap_port: int = 993,
                  smtp_host: Optional[str] = None, smtp_port: int = 465, trash_folder: Optional[str] = None,
-                 sent_folder: Optional[str] = None, **kw):
+                 sent_folder: Optional[str] = None, drafts_folder: Optional[str] = None, **kw):
+        self.drafts_folder = drafts_folder
         self.username, self.password = username, password
         self.address = kw.get("from") or username
         self.imap_host, self.imap_port = imap_host, int(imap_port)
@@ -135,7 +136,19 @@ class ImapBackend(Backend):
         names.sort(key=lambda n: (n.upper() != "INBOX", n.lower()))
         return names or ["INBOX"]
 
+    def _drafts_box(self) -> str:
+        return self.drafts_folder or self._special("\\Drafts") or "Drafts"
+
+    def hidden_folders(self):
+        box = self._drafts_box()
+        return [box] if box != "Drafts" else []
+
     def list_messages(self, folder="INBOX", limit=50, query=None) -> List[Message]:
+        if folder == "Drafts" and self._drafts_box() != "Drafts":
+            msgs = self.list_messages(self._drafts_box(), limit, query)
+            for m in msgs:
+                m.folder = "Drafts"
+            return msgs
         self._select(folder, readonly=True)
         c = self.conn()
         if query:
@@ -158,6 +171,9 @@ class ImapBackend(Backend):
                 continue
             unread = "\\Seen" not in meta
             m = parse_email(item[1], f"{folder}/{um.group(1)}", folder, unread)
+            m.starred = "\\Flagged" in meta
+            if folder == "Drafts":
+                m.folder = "Drafts"
             out.append(m)
         out.sort(key=lambda m: m.date, reverse=True)
         return out
@@ -177,14 +193,43 @@ class ImapBackend(Backend):
         typ, data = self.conn().uid("FETCH", uid, "(FLAGS BODY.PEEK[])")
         for item in data or []:
             if isinstance(item, tuple):
-                unread = "\\Seen" not in item[0].decode(errors="replace")
-                return parse_email(item[1], msg_id, folder, unread)
+                meta = item[0].decode(errors="replace")
+                m = parse_email(item[1], msg_id, folder, "\\Seen" not in meta)
+                m.starred = "\\Flagged" in meta
+                if folder == self._drafts_box():
+                    m.folder = "Drafts"
+                return m
         raise BackendError(f"No such message: {msg_id}")
 
     def set_read(self, msg_id, read):
         folder, uid = self._split(msg_id)
         self._select(folder)
         self.conn().uid("STORE", uid, "+FLAGS" if read else "-FLAGS", "(\\Seen)")
+
+    def set_starred(self, msg_id, starred):
+        folder, uid = self._split(msg_id)
+        self._select(folder)
+        self.conn().uid("STORE", uid, "+FLAGS" if starred else "-FLAGS", "(\\Flagged)")
+
+    def save_draft(self, out: Outgoing, draft_id: Optional[str] = None) -> str:
+        from ..drafts import draft_eml
+        box = self._drafts_box()
+        typ, _ = self.conn().append(self._q(box), "(\\Draft \\Seen)", None, draft_eml(out, self.address))
+        if typ != "OK":
+            raise BackendError(f"Could not save draft to {box}")
+        if draft_id:
+            self.delete_draft(draft_id)
+        return box
+
+    def get_draft(self, draft_id) -> Outgoing:
+        from ..drafts import outgoing_from_eml
+        return outgoing_from_eml(self._raw(draft_id))
+
+    def delete_draft(self, draft_id):
+        folder, uid = self._split(draft_id)
+        self._select(folder)
+        self.conn().uid("STORE", uid, "+FLAGS", "(\\Deleted)")
+        self.conn().expunge()
 
     def delete(self, msg_id):
         folder, uid = self._split(msg_id)

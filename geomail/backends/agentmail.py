@@ -46,18 +46,55 @@ class AgentMailBackend(Backend):
         labels = d.get("labels") or []
         to = d.get("to") or []
         return Message(
-            id=d["message_id"], folder=folder, sender=d.get("from", ""), to=to if isinstance(to, list) else [to],
+            id=d.get("message_id") or d.get("draft_id"), folder=folder, sender=d.get("from", ""), to=to if isinstance(to, list) else [to],
             cc=d.get("cc") or [], subject=d.get("subject") or "(no subject)",
-            date=d.get("timestamp") or d.get("created_at") or "", unread="unread" in labels,
+            date=d.get("timestamp") or d.get("updated_at") or d.get("created_at") or "", unread="unread" in labels,
+            starred="starred" in labels,
             text=d.get("text") or "", html=d.get("html") or "", preview=d.get("preview") or "",
             attachments=[Attachment(id=a["attachment_id"], filename=a.get("filename") or a["attachment_id"],
                                     size=a.get("size") or 0, content_type=a.get("content_type") or "")
                          for a in d.get("attachments") or []])
 
     def folders(self) -> List[str]:
-        return ["INBOX", "Sent", "Trash"]
+        return ["INBOX", "Drafts", "Sent", "Trash"]
+
+    def set_starred(self, msg_id, starred):
+        body = {"add_labels": ["starred"]} if starred else {"remove_labels": ["starred"]}
+        self._req("PATCH", self._mid(msg_id), json=body)
+
+    def list_starred(self, limit=100):
+        data = self._req("GET", f"{self._base}/messages", params={"limit": limit, "labels": "starred"})
+        return [self._to_msg(d, "INBOX") for d in data.get("messages", [])]
+
+    # --- drafts: AgentMail drafts API -----------------------------------
+    def _did(self, draft_id):
+        return f"{self._base}/drafts/{quote(draft_id, safe='')}"
+
+    def save_draft(self, out: Outgoing, draft_id=None) -> str:
+        body = {"to": out.to, "cc": out.cc, "bcc": out.bcc, "subject": out.subject, "text": out.body}
+        if draft_id:
+            d = self._req("PATCH", self._did(draft_id), json=body)
+        else:
+            if out.in_reply_to:
+                body["in_reply_to"] = out.in_reply_to
+                body["reply_all"] = bool(out.reply_all)
+            if out.attachments:
+                body["attachments"] = self._atts(out.attachments)
+            d = self._req("POST", f"{self._base}/drafts", json=body)
+        return d.get("draft_id", draft_id or "") if isinstance(d, dict) else (draft_id or "")
+
+    def get_draft(self, draft_id) -> Outgoing:
+        d = self._req("GET", self._did(draft_id))
+        return Outgoing(to=d.get("to") or [], cc=d.get("cc") or [], bcc=d.get("bcc") or [],
+                        subject=d.get("subject") or "", body=d.get("text") or "", in_reply_to=d.get("in_reply_to"))
+
+    def delete_draft(self, draft_id):
+        self._req("DELETE", self._did(draft_id))
 
     def list_messages(self, folder="INBOX", limit=50, query=None) -> List[Message]:
+        if folder == "Drafts" and not query:
+            data = self._req("GET", f"{self._base}/drafts", params={"limit": limit})
+            return [self._to_msg(d, "Drafts") for d in data.get("drafts", [])]
         if query:
             data = self._req("GET", f"{self._base}/messages/search", params={"q": query, "limit": limit})
         else:

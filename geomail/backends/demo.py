@@ -49,6 +49,7 @@ class DemoBackend(Backend):
 
     def _msg(self, d: dict) -> Message:
         d = dict(d)
+        d.pop("draft", None)
         d["attachments"] = [Attachment(**a) for a in d.get("attachments", [])]
         return Message(**d)
 
@@ -59,7 +60,37 @@ class DemoBackend(Backend):
         raise BackendError(f"No such message: {msg_id}")
 
     def folders(self) -> List[str]:
-        return ["INBOX", "Sent", "Trash"]
+        return ["INBOX", "Drafts", "Sent", "Trash"]
+
+    def scheduled_dir(self):
+        if self.state_path:
+            return self.state_path.parent / (self.state_path.stem + "-scheduled")
+        return super().scheduled_dir()
+
+    def set_starred(self, msg_id, starred):
+        self._find(msg_id)["starred"] = bool(starred)
+        self._save()
+
+    def save_draft(self, out: Outgoing, draft_id=None) -> str:
+        if draft_id:
+            d = self._find(draft_id)
+        else:
+            d = {"id": "dr" + uuid.uuid4().hex[:8], "folder": "Drafts"}
+            self.state["messages"].append(d)
+        d.update(sender=ME, to=list(out.to), cc=list(out.cc), subject=out.subject, text=out.body,
+                 date=datetime.now(timezone.utc).isoformat(timespec="seconds"), draft=out.to_dict())
+        self._save()
+        return d["id"]
+
+    def get_draft(self, draft_id) -> Outgoing:
+        d = self._find(draft_id)
+        if d.get("folder") != "Drafts":
+            raise BackendError("Not a draft")
+        return Outgoing.from_dict(d.get("draft") or {})
+
+    def delete_draft(self, draft_id):
+        self.state["messages"].remove(self._find(draft_id))
+        self._save()
 
     def list_messages(self, folder="INBOX", limit=50, query=None) -> List[Message]:
         out = []
