@@ -26,7 +26,7 @@ class Message:
     preview: str = ""
     message_id_header: str = ""
     attachments: List[Attachment] = field(default_factory=list)
-    status: str = ""  # e.g. outbox status: "Waiting for approval", "Sent", "Failed: ...", "Scheduled for ..."
+    status: str = ""  # e.g. outbox status: "Sending", "Waiting for approval", "Sent", "Failed: ...", "Scheduled for ..."
     starred: bool = False
     send_at: str = ""  # scheduled items: ISO 8601 with timezone
 

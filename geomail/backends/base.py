@@ -93,7 +93,7 @@ class Backend(ABC):
         self.schedule_store.remove(msg_id.split("/", 1)[1])
 
     def run_due(self, now: Optional[datetime] = None) -> List[dict]:
-        """Release due scheduled items through send() (grokbot: queues for approval, never sends)."""
+        """Release due scheduled items through send() (grokbot: moves them to the outbox for the mail bot)."""
         results = []
         for d in self.schedule_store.due(now):
             out = self.schedule_store.outgoing(d)

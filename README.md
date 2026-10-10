@@ -23,7 +23,7 @@ A traditional email inbox that runs in a terminal, with a retro GeoCities look. 
 - Pluggable backends:
   - **demo**: sample mail, zero setup. Sending only stores the message locally and never leaves the machine.
   - **imap**: generic IMAP and SMTP (Gmail or Outlook app passwords, Fastmail, iCloud, Proton Bridge, and so on).
-  - **grokbot** (alias `maildir`): a Grok Bot native inbox through a shared Maildir mirror and an approval-gated outbox (see *Set up with your Grok Bot*).
+  - **grokbot** (alias `maildir`): a Grok Bot native inbox through a shared Maildir mirror and an outbox your mail bot delivers (see *Set up with your Grok Bot*).
   - **agentmail**: the [AgentMail](https://docs.agentmail.to) REST API, which gives AI agents real inboxes.
 - A non-interactive CLI (`list`, `read`, `send` with `--draft`/`--at`, `delete`, `mark`, `star`, `scheduler`, `save-attachment`, `folders`) with `--json` output for bots.
 - Secrets come only from environment variables or the OS keyring. They are never written to config.
@@ -124,7 +124,7 @@ geocities-mail send --to a@example.com --subject Hi --body "…" --at "2026-10-1
 
 What "due" does depends on the backend:
 
-- **Grok Bot (`grokbot`):** a due item is **only proposed, never auto-sent.** It moves into `outbox/pending/` (its sidecar has `scheduled_for`), and your mail bot asks you to approve it like any other outbox item. Have the mail bot's sync routine run `geocities-mail scheduler run` on every sync.
+- **Grok Bot (`grokbot`):** a due item moves into `outbox/pending/` (its sidecar has `scheduled_for`), and your mail bot sends it exactly as written on its next sync, just as if you had clicked Send at that time. With `require_approval = true`, the bot asks you first instead. Have the mail bot's sync routine run `geocities-mail scheduler run` on every sync.
 - **IMAP and AgentMail:** a due item is **sent** by `scheduler run` or by the running TUI. GeoCities Mail, or a scheduled job such as cron running `geocities-mail scheduler run`, has to be running at the send time, or the message goes out the next time one runs. If a send fails, the item stays in Scheduled with the error and is retried on the next run.
 
 ## Stars and drafts by backend
@@ -165,7 +165,7 @@ Any Grok Bot user can do this. You need two things: the bot email address Grok B
    ```
    This writes `~/.config/geomail/config.toml` and creates an empty mirror folder at `/workspace/grokbot-mail/yourbot/` (the part before the `@` becomes the folder name). You can also skip `init` and set `GEOCITIES_MAIL_ADDRESS=yourbot@mail.grokbot.com`. Add `--sender-bot "Name of your mail bot"` to make confirmations name your bot.
 3. **Teach your mail bot to sync.** Paste the prompt in [Prompt for your mail bot](#prompt-for-your-mail-bot) into the bot that reads your inbox. Replace `<YOUR_ADDRESS>` and `<MIRROR_PATH>` first.
-4. **Optional: make it automatic.** Ask that bot to create a routine, for example: *"Every 15 minutes, run the GeoCities Mail sync from your instructions."* The sync includes `geocities-mail scheduler run`, so scheduled mail is offered to you for approval close to its send time.
+4. **Optional: make it automatic.** Ask that bot to create a routine, for example: *"Every 15 minutes, run the GeoCities Mail sync from your instructions."* The sync includes `geocities-mail scheduler run`, so scheduled mail goes out on the first sync after its send time.
 5. **Open it.** Tell a bot: *"Run GeoCities Mail in a terminal on your desktop so I can use it."* It runs `geocities-mail` in a visible terminal, and you read and write mail with the keyboard.
 
 If there's no config file, GeoCities Mail picks a backend in this order: `GEOCITIES_MAIL_ADDRESS`, then a single synced mirror under `/workspace/grokbot-mail/*/` (one with a `manifest.json`), then the demo inbox.
@@ -176,7 +176,9 @@ Grok Bot's own inboxes (`@mail.grokbot.com`) don't have a public API that code c
 
 1. **Your mail bot copies mail into a folder on a schedule.** The bot that can read the inbox saves each new email as a file in the mirror folder.
 2. **GeoCities Mail shows it.** Open `geocities-mail` and you get a normal inbox. The header says when the bot last synced. Marking read or unread and deleting only change your local copy, not the real mailbox.
-3. **Sending goes to an Outbox.** When you write, reply or forward, GeoCities Mail doesn't send anything itself. It puts the message in **Outbox** with status *Waiting for approval*. On its next sync, the mail bot shows you each queued message. It sends only the ones you approve, and the status changes to **Sent** or **Failed**.
+3. **Send means send.** When you click **Send**, GeoCities Mail puts the message in **Outbox** with status *Sending* and shows "Sending… your mail bot will deliver it on its next sync". On its next sync, your mail bot sends it exactly as written, and the status changes to **Sent** or **Failed**. You give your mail bot this permission once, in the prompt below. Clicking Send in GeoCities Mail is your instruction to send that message.
+
+   If you'd rather approve each message in chat, set `require_approval = true` (or run `init --require-approval`). The button then reads **Queue for approval**, the status reads *Waiting for approval*, and the bot asks you before sending each one.
 
 Config written by `init` (edit it if you like):
 
@@ -188,6 +190,7 @@ backend = "grokbot"                       # alias: "maildir"
 address = "yourbot@mail.grokbot.com"      # or env GEOCITIES_MAIL_ADDRESS
 path = "/workspace/grokbot-mail/yourbot"  # default: /workspace/grokbot-mail/<inbox-name>
 sender_bot = "your mail bot"              # name shown in the send confirmation
+require_approval = false                  # true: the bot asks before sending each message
 ```
 
 ### Mirror spec (v1)
@@ -239,7 +242,7 @@ sender_bot = "your mail bot"              # name shown in the send confirmation
   "subject": "Re: Hello", "body": "Thanks!",
   "in_reply_to": "INBOX/gm-…", "in_reply_to_message_id": "<abc@mail.example>", "reply_all": false,
   "message_id": "<…@host>", "attachments": ["/abs/path/file.pdf"], "eml": "20261010T153000-1a2b3c4d.eml",
-  "scheduled_for": null
+  "scheduled_for": null, "require_approval": false
 }
 ```
 
@@ -249,7 +252,7 @@ sender_bot = "your mail bot"              # name shown in the send confirmation
 geocities-mail -A grokbot --json mirror-import new1.eml new2.json   # imports + updates last_synced
 cat msgs.json | geocities-mail -A grokbot --json mirror-import -     # JSON on stdin
 geocities-mail -A grokbot --json mirror-touch --synced-by "Mail Bot"
-geocities-mail -A grokbot --json scheduler run                # due scheduled mail -> outbox/pending (approval still required)
+geocities-mail -A grokbot --json scheduler run                # due scheduled mail -> outbox/pending (the mail bot then sends them)
 geocities-mail -A grokbot --json outbox list --status pending
 geocities-mail -A grokbot --json outbox mark <id> sent
 geocities-mail -A grokbot --json outbox mark <id> failed --reason "User declined"
@@ -265,10 +268,11 @@ Replace `<YOUR_ADDRESS>` (for example `yourbot@mail.grokbot.com`) and `<MIRROR_P
 >
 > 1. **Pull new mail.** Use your email tools to find messages in `<YOUR_ADDRESS>` that arrived since `last_synced` in `<MIRROR_PATH>/manifest.json` (all of them if it's missing). For each one, write a JSON object like `{"message_id","from","to","cc","subject","date","text","html","in_reply_to","attachments":[{"filename","path"}]}` (save attachments to files first) and run `geocities-mail -A grokbot --json mirror-import <file.json>`. You can also write a full `.eml` into `<MIRROR_PATH>/INBOX/tmp/` and rename it into `<MIRROR_PATH>/INBOX/new/`. Importing is idempotent, so re-importing is safe. Never delete or modify files that are already in the mirror, and never reset their read flags.
 > 2. **Update the manifest.** Run `geocities-mail -A grokbot --json mirror-touch --synced-by "<your bot name>" --account-address <YOUR_ADDRESS>` (import already does this, but run it even when nothing is new).
-> 3. **Release scheduled mail.** Run `geocities-mail -A grokbot --json scheduler run`. This only moves messages whose scheduled time has passed into the outbox. Scheduled messages are **proposed for approval at their time, never sent automatically**.
-> 4. **Process the outbox.** Run `geocities-mail -A grokbot --json outbox list --status pending`. For each item, show me a draft for approval with the exact From, To, Cc, Bcc, Subject, body and attachments, and say whether it's a reply (use `in_reply_to_message_id` to reply in the original thread). If the item has `scheduled_for`, mention that it was scheduled for that time. **Never send without my explicit approval of that specific message.** Don't treat approval for one message as approval for others, and don't send a declined message another way.
-> 5. **Record the result.** After you send an approved message, run `geocities-mail -A grokbot outbox mark <id> sent`. If I decline it or sending fails, run `geocities-mail -A grokbot outbox mark <id> failed --reason "<short reason>"`. Leave items I haven't decided on in `pending`.
-> 6. Give me a one-line summary, for example "3 new messages mirrored, 1 sent, 1 waiting for your approval".
+> 3. **Release scheduled mail.** Run `geocities-mail -A grokbot --json scheduler run`. This moves messages whose scheduled time has passed into the outbox, and they're handled exactly like messages I clicked Send on.
+> 4. **Send the outbox.** Run `geocities-mail -A grokbot --json outbox list --status pending`. **Every item there was explicitly sent by me:** I clicked **Send** in GeoCities Mail (or scheduled it, and its time has come). I'm granting you standing permission to send these items from `<YOUR_ADDRESS>` exactly as written: the From, To, Cc, Bcc, Subject, body and attachments in the item's JSON. Reply in the original thread when `in_reply_to_message_id` is set. Don't change, add to or improve the content, don't add recipients, and don't send anything that isn't in `outbox/pending`. If an item looks malformed (no recipients, attachment file missing) or you're unsure it's genuine, don't send it; mark it failed with the reason and tell me.
+>    *Approval mode:* if an item's JSON has `"require_approval": true`, show me each item instead and send only the ones I explicitly approve in chat.
+> 5. **Record the result.** After sending, run `geocities-mail -A grokbot outbox mark <id> sent`. If sending fails (or I decline it in approval mode), run `geocities-mail -A grokbot outbox mark <id> failed --reason "<short reason>"`.
+> 6. Give me a one-line summary, for example "3 new messages mirrored, 2 sent".
 
 When you handle mail for me in other ways, use `geocities-mail --json list/read`. **Never** run `geocities-mail send` with a real IMAP or AgentMail account without my explicit approval of the recipients, subject, and body.
 

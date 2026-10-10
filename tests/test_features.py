@@ -106,7 +106,7 @@ def test_maildir_schedule_lifecycle(mirror):
     assert res[0]["ok"] and mirror.list_folder("Scheduled") == []
     pend = mirror.outbox_items("pending")  # queued for approval, NOT sent
     assert pend[0]["subject"] == "Later" and pend[0]["scheduled_for"]
-    assert "Waiting for approval (scheduled for" in mirror.list_folder("Outbox")[0].status
+    assert "Sending (scheduled for" in mirror.list_folder("Outbox")[0].status
     # cancel
     sid2 = mirror.schedule(Outgoing(to=["a@example.com"], subject="X", body="b"), FUTURE())
     assert mirror.remove(mirror.open_message(sid2)) == "Scheduled message cancelled"
@@ -226,6 +226,7 @@ async def test_tui_click_everything(mirror):
         # compose via button -> save draft via button
         await pilot.click("#compose-btn"); await pilot.pause()
         assert isinstance(app.screen, ComposeScreen)
+        assert str(app.screen.query_one("#send").label) == "Send"
         app.screen.query_one("#to", Input).value = "pal@example.com"
         app.screen.query_one("#subject", Input).value = "Draft subj"
         await pilot.click("#draft"); await pilot.pause()

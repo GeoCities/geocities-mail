@@ -20,7 +20,8 @@ def make_backend(name: str, settings: dict) -> Backend:
                                "`geocities-mail init --grokbot-address you@mail.grokbot.com` "
                                f"or set {ADDRESS_ENV}.")
         return MaildirMirrorBackend(path=os.path.expanduser(path), address=address,
-                                    sender_bot=settings.get("sender_bot", "your mail bot"))
+                                    sender_bot=settings.get("sender_bot", "your mail bot"),
+                                    require_approval=bool(settings.get("require_approval", False)))
     if kind == "imap":
         from .imap import ImapBackend
         pw = get_secret(name, settings.get("password_env", "GEOMAIL_IMAP_PASSWORD"))

@@ -28,6 +28,7 @@ backend = "demo"
 # address = "yourbot@mail.grokbot.com"    # or env GEOCITIES_MAIL_ADDRESS
 # path = "/workspace/grokbot-mail/yourbot" # default: /workspace/grokbot-mail/<inbox-name>
 # sender_bot = "your mail bot"             # name shown in the send confirmation
+# require_approval = false                 # true: mail bot asks before sending each message
 
 # [accounts.mymail]
 # backend = "imap"
@@ -97,7 +98,7 @@ def load_config(path: Path | None = None) -> dict:
 
 
 def init_config(path: Path | None = None, grokbot_address: str | None = None, mirror_path: str | None = None,
-                sender_bot: str | None = None, force: bool = False) -> Path:
+                sender_bot: str | None = None, force: bool = False, require_approval: bool = False) -> Path:
     path = Path(path) if path else CONFIG_PATH
     path.parent.mkdir(parents=True, exist_ok=True)
     if path.exists() and not force:
@@ -111,7 +112,8 @@ def init_config(path: Path | None = None, grokbot_address: str | None = None, mi
         mp = mirror_path or str(mirror_path_for(grokbot_address))
         text = text.replace('default = "demo"', 'default = "grokbot"', 1)
         text += (f'\n[accounts.grokbot]\nbackend = "grokbot"\naddress = "{grokbot_address}"\n'
-                 f'path = "{mp}"\nsender_bot = "{sender_bot or "your mail bot"}"\n')
+                 f'path = "{mp}"\nsender_bot = "{sender_bot or "your mail bot"}"\n'
+                 f'require_approval = {"true" if require_approval else "false"}\n')
     path.write_text(text)
     return path
 

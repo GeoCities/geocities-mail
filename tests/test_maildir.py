@@ -78,11 +78,17 @@ def test_outbox_pending_and_transitions(mirror, tmp_path):
     assert side["subject"] == "Re: Hello" and side["body"] == "Thanks!"
     assert side["in_reply_to"] == orig.id and side["in_reply_to_message_id"] == "<m1@x>"
     assert side["attachments"] == [str(f.resolve())] and side["status"] == "pending"
+    assert side["require_approval"] is False
     raw = (pend / f"{key}.eml").read_bytes()
     assert b"In-Reply-To: <m1@x>" in raw and b"pic.txt" in raw and b"Bcc" not in raw
     ob = mirror.list_messages("Outbox")
-    assert ob[0].status == "Waiting for approval" and ob[0].id == oid
-    assert "after you approve" in mirror.send_notice and "your mail bot" in mirror.send_notice
+    assert ob[0].status == "Sending" and ob[0].id == oid
+    assert mirror.send_notice == "Sending… your mail bot will deliver it on its next sync"
+    assert mirror.send_label == "Send"
+    mirror.require_approval = True
+    assert mirror.list_messages("Outbox")[0].status == "Waiting for approval"
+    assert "after you approve" in mirror.send_notice and mirror.send_label == "Queue for approval"
+    mirror.require_approval = False
     # bot sends it
     mirror.mark_outbox(key, "sent")
     assert not (pend / f"{key}.json").exists()
@@ -112,7 +118,7 @@ def test_cli_mirror_flow(tmp_path, capsys):
     assert json.loads((root / "manifest.json").read_text())["last_synced"]
     assert main(["--config", str(cfg), "--json", "send", "--to", "z@example.invalid", "--subject", "Q", "--body", "B"]) == 0
     d = json.loads(capsys.readouterr().out)
-    assert d["queued"] and d["sent"] is False and "after you approve" in d["notice"]
+    assert d["queued"] and d["sent"] is False and "next sync" in d["notice"]
     assert main(["--config", str(cfg), "--json", "outbox", "list", "--status", "pending"]) == 0
     items = json.loads(capsys.readouterr().out)
     assert items[0]["subject"] == "Q" and Path(items[0]["eml_path"]).exists()
@@ -185,5 +191,16 @@ async def test_tui_mirror_smoke(mirror):
         assert json.loads(pending[0].read_text())["in_reply_to"] == first.id
         app.folder = "Outbox"; app.load(); await pilot.pause()
         assert app.query_one("#messages", DataTable).row_count == 1
-        assert app.messages[0].status == "Waiting for approval"
+        assert app.messages[0].status == "Sending"
         await pilot.press("q")
+
+
+def test_require_approval_config(tmp_path, capsys):
+    cfg = tmp_path / "c.toml"
+    cfg.write_text(f'default="g"\n[accounts.g]\nbackend="grokbot"\npath="{tmp_path / "m"}"\nrequire_approval=true\n')
+    assert main(["--config", str(cfg), "--json", "send", "--to", "a@example.com", "--subject", "s", "--body", "b"]) == 0
+    assert "after you approve" in json.loads(capsys.readouterr().out)["notice"]
+    cfg2 = tmp_path / "c2.toml"
+    assert main(["--config", str(cfg2), "init", "--grokbot-address", "me@mail.grokbot.com", "--mirror-path",
+                 str(tmp_path / "m2"), "--require-approval"]) == 0
+    assert "require_approval = true" in cfg2.read_text()

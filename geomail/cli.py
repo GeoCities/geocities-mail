@@ -28,7 +28,9 @@ def main(argv=None):
     inp = sub.add_parser("init", help="write a starter config.toml")
     inp.add_argument("--grokbot-address", help="your bot's own address, e.g. you@mail.grokbot.com")
     inp.add_argument("--mirror-path", help="mirror folder (default /workspace/grokbot-mail/<inbox-name>)")
-    inp.add_argument("--sender-bot", help="name of the bot that sends after approval (default 'your mail bot')")
+    inp.add_argument("--sender-bot", help="name of the bot that delivers your mail (default 'your mail bot')")
+    inp.add_argument("--require-approval", action="store_true",
+                     help="grokbot: mail bot asks you before sending each message (default: Send means send)")
     inp.add_argument("--force", action="store_true", help="overwrite an existing config")
     sub.add_parser("folders", help="list folders")
     lp = sub.add_parser("list", help="list messages")
@@ -55,7 +57,7 @@ def main(argv=None):
     stp.add_argument("--off", action="store_true")
     scp = sub.add_parser("scheduler", help="scheduled messages")
     ssub = scp.add_subparsers(dest="sched_cmd", required=True)
-    ssub.add_parser("run", help="release due items (grokbot: queue to outbox/pending for approval; others: send)")
+    ssub.add_parser("run", help="release due items (grokbot: move to outbox/pending for the mail bot; others: send)")
     ssub.add_parser("list", help="list scheduled items")
     sc = ssub.add_parser("cancel", help="cancel a scheduled item")
     sc.add_argument("id")
@@ -89,7 +91,7 @@ def main(argv=None):
     if args.cmd == "init":
         try:
             path = init_config(Path(args.config) if args.config else None, args.grokbot_address,
-                               args.mirror_path, args.sender_bot, args.force)
+                               args.mirror_path, args.sender_bot, args.force, args.require_approval)
         except (FileExistsError, ValueError) as e:
             print(json.dumps({"error": str(e)}) if args.json else f"geocities-mail: {e}", file=sys.stdout if args.json else sys.stderr)
             return 1

@@ -313,9 +313,8 @@ class GeoMailApp(App):
             return
         ok = [r for r in res if r["ok"]]
         if ok:
-            notice = getattr(self.backend, "send_notice", None)
             self.notify(f"{len(ok)} scheduled message(s) released. " +
-                        ("Queued for your approval in Outbox." if notice else "Sent."), timeout=8)
+                        getattr(self.backend, "release_notice", "Sent."), timeout=8)
         for r in res:
             if not r["ok"]:
                 self.notify(f"Scheduled send failed: {r['error']}", severity="error")
@@ -460,8 +459,7 @@ class GeoMailApp(App):
     # --- compose / drafts / schedule ------------------------------------
     def open_compose(self, out: Optional[Outgoing] = None, title="Compose", draft_id=None, sched_id=None,
                      send_at: str = ""):
-        notice = getattr(self.backend, "send_notice", None)
-        scr = ComposeScreen(out, title=title, send_label="Queue for approval" if notice else "Send")
+        scr = ComposeScreen(out, title=title, send_label=getattr(self.backend, "send_label", "Send"))
         scr.out.send_at = send_at  # type: ignore[attr-defined]
         self.push_screen(scr, lambda res: self._after_compose(res, draft_id, sched_id))
 
@@ -483,7 +481,9 @@ class GeoMailApp(App):
                 sid = sched_id.split("/", 1)[1] if sched_id else None
                 self.backend.schedule(out, extra, sid)
                 sched_id = None  # rescheduled in place
-                notice = " It will be queued for your approval then." if getattr(self.backend, "send_notice", None) \
+                notice = (" It will be queued for your approval then." if getattr(self.backend, "require_approval", False)
+                          else " Your mail bot will send it on its first sync after that time.") \
+                    if getattr(self.backend, "send_notice", None) \
                     else " Keep GeoCities Mail or `geocities-mail scheduler run` running so it goes out."
                 self.notify(f"Scheduled for {fmt_local(extra.isoformat())}.{notice}", timeout=8)
             if draft_id:  # draft was sent or scheduled: remove it

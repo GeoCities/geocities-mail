@@ -91,7 +91,8 @@ def build_eml(frm: str, to, subject: str, body: str, cc=(), date: str = "", mess
 class MaildirMirrorBackend(Backend):
     name = "grokbot"
 
-    def __init__(self, path, address: str = "", sender_bot: str = "your mail bot"):
+    def __init__(self, path, address: str = "", sender_bot: str = "your mail bot", require_approval: bool = False):
+        self.require_approval = bool(require_approval)
         self.root = ensure_layout(path)
         self.sender_bot = sender_bot
         self.address = address or self.manifest().get("account") or "grokbot mirror"
@@ -126,8 +127,23 @@ class MaildirMirrorBackend(Backend):
 
     @property
     def send_notice(self) -> str:
-        return (f"Queued in Outbox. It will be sent by {self.sender_bot} after you approve it "
-                f"— status: Waiting for approval.")
+        if self.require_approval:
+            return (f"Queued in Outbox. It will be sent by {self.sender_bot} after you approve it "
+                    f"— status: Waiting for approval.")
+        return f"Sending… {self.sender_bot} will deliver it on its next sync"
+
+    @property
+    def pending_label(self) -> str:
+        return "Waiting for approval" if self.require_approval else "Sending"
+
+    @property
+    def send_label(self) -> str:
+        return "Queue for approval" if self.require_approval else "Send"
+
+    @property
+    def release_notice(self) -> str:
+        return "Queued for your approval in Outbox." if self.require_approval else \
+            f"Sending… {self.sender_bot} will deliver on its next sync."
 
     # --- mail folders ---------------------------------------------------
     def folders(self) -> List[str]:
@@ -297,6 +313,7 @@ class MaildirMirrorBackend(Backend):
             "attachments": [str(Path(p).resolve()) for p in out.attachments],
             "eml": f"{oid}.eml",
             "scheduled_for": out.scheduled_for,
+            "require_approval": self.require_approval,
         }
         pend = self.root / "outbox" / "pending"
         _atomic_write(pend / f"{oid}.eml", raw)
@@ -313,7 +330,7 @@ class MaildirMirrorBackend(Backend):
     def _outbox_message(self, oid: str) -> Message:
         state, base = self._find_outbox(oid)
         side = json.loads(base.with_suffix(".json").read_text())
-        status = OUTBOX_STATES[state]
+        status = self.pending_label if state == "pending" else OUTBOX_STATES[state]
         if state == "pending" and side.get("scheduled_for"):
             from ..schedule import fmt_local
             status += f" (scheduled for {fmt_local(side['scheduled_for'])})"
