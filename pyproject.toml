@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "geomail"
+version = "0.1.0"
+description = "A retro GeoCities-flavored terminal email inbox (TUI + bot-friendly CLI) with IMAP/SMTP, AgentMail and demo backends."
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.9"
+dependencies = [
+  "textual>=0.60",
+  "html2text>=2020.1.16",
+  "httpx>=0.24",
+  "tomli>=2.0; python_version < '3.11'",
+]
+
+[project.optional-dependencies]
+keyring = ["keyring>=24"]
+test = ["pytest>=7", "pytest-asyncio>=0.21"]
+
+[project.scripts]
+geocities-mail = "geomail.cli:main"
+geomail = "geomail.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["geomail*"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
